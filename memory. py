@@ -1,0 +1,80 @@
+# =====================================================================
+# Architecture: Non-Linear Semantic Memory Framework for LangChain/LangGraph
+# Author: Darryl Alan Johnson (GitHub: countryboy91h3-arch)
+# Date: June 2026
+# =====================================================================
+
+from typing import Dict, Any, List, Annotated, TypedDict
+from pydantic import BaseModel, Field
+from langchain_core.memory import BaseMemory
+from langchain_core.embeddings import Embeddings
+from langgraph.graph  StateGraph, START, END
+from langgraph.graph.message import add_messages
+from datetime import datetime
+import numpy as np
+
+class NonLinearSemanticMemory(BaseMemory):
+    """
+    A custom LangChain memory component that retrieves historical context
+    based on non-linear semantic resonance combined with dynamic time-decay.
+    """
+    embedding_model: Embeddings
+    memory_key: str = "chat_history"
+    alpha: float = 0.7  # Weight given to meaning vs. time
+    decay_rate: float = 0.01  # Rate at which memories naturally fade
+    memory_nodes: List[Dict[str, Any]] = Field(default_factory=list)
+
+    @property
+    def memory_variables(self) -> List[str]:
+        return [self.memory_key]
+
+    def save_context(self, inputs: Dict[str, Any], outputs: Dict[str, Any]) -> None:
+        user_input = inputs.get("input", "")
+        ai_output = outputs.get("output", "")
+        text_to_embed = f"User: {user_input}\nAI: {ai_output}"
+        vector = self.embedding_model.embed_query(text_to_embed)
+        
+        self.memory_nodes.append({
+            "text": text_to_embed,
+            "vector": vector,
+            "timestamp": datetime.utcnow()
+        })
+
+    def load_memory_variables(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
+        current_query = inputs.get("input", "")
+        if not self.memory_nodes or not current_query:
+            return {self.memory_key: ""}
+            
+        query_vector = np.array(self.embedding_model.embed_query(current_query))
+        scored_nodes = []
+        now = datetime.utcnow()
+        
+        for node in self.memory_nodes:
+            node_vector = np.array(node["vector"])
+            similarity = np.dot(query_vector, node_vector) / (np.linalg.norm(query_vector) * np.linalg.norm(node_vector))
+            
+            elapsed_time = (now - node["timestamp"]).total_seconds() / 60.0
+            time_decay = np.exp(-self.decay_rate * elapsed_time)
+            
+            # Non-linear combined resonance score
+            final_score = (self.alpha * similarity) + ((1 - self.alpha) * time_decay)
+            scored_nodes.append((final_score, node["text"]))
+            
+        scored_nodes.sort(key=lambda x: x[0], reverse=True)
+        top_memories = [text for score, text in scored_nodes[:3]]
+        
+        return {self.memory_key: "\n\n---\n\n".join(top_memories)}
+
+# =====================================================================
+# LangGraph State & Node Workflow Integration
+# =====================================================================
+
+class AgentState(TypedDict):
+    messages: Annotated[list, add_messages]
+    resonating_context: str
+
+def recall_past_memories_node(state: AgentState, memory_engine: NonLinearSemanticMemory) -> dict:
+    latest_message = state["messages"][-1].content if state["messages"] else ""
+    memory_data = memory_engine.load_memory_variables({"input": latest_message})
+    return {"resonating_context": memory_data.get("chat_history", "")}
+    
