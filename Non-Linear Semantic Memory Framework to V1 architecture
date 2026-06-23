@@ -1,0 +1,422 @@
+# =====================================================================
+# Architecture:
+# Non-Linear Semantic Memory Framework for LangChain/LangGraph
+#
+# Author:
+# Darryl Alan Johnson
+#
+# GitHub:
+# countryboy91h3-arch
+#
+# Date:
+# June 2026
+#
+# Purpose:
+# A custom LangChain memory primitive implementing non-linear semantic
+# resonance retrieval with temporal decay.
+#
+# Concept:
+# Conversation history is stored linearly.
+# Contextual meaning is not.
+#
+# This framework retrieves prior context through semantic relevance
+# combined with temporal weighting.
+# =====================================================================
+
+
+from typing import Dict, Any, List, Annotated, TypedDict
+from datetime import datetime, timezone
+import uuid
+
+import numpy as np
+
+from pydantic import Field
+
+from langchain_core.memory import BaseMemory
+from langchain_core.embeddings import Embeddings
+
+from langgraph.graph.message import add_messages
+
+
+
+class NonLinearSemanticMemory(BaseMemory):
+    """
+    Custom LangChain memory component.
+
+    Retrieves historical context using:
+
+    - Semantic similarity
+    - Temporal decay
+
+    Designed to replace linear conversation recall
+    with contextual semantic resonance.
+    """
+
+
+    embedding_model: Embeddings
+
+    memory_key: str = "chat_history"
+
+
+    # Weighting system
+    semantic_weight: float = 0.70
+    time_weight: float = 0.30
+
+
+    # Memory decay rate
+    decay_rate: float = 0.01
+
+
+    memory_nodes: List[Dict[str, Any]] = Field(
+        default_factory=list
+    )
+
+
+
+    @property
+    def memory_variables(self) -> List[str]:
+
+        return [
+            self.memory_key
+        ]
+
+
+
+    # ---------------------------------------------------------
+    # Similarity Calculation
+    # ---------------------------------------------------------
+
+    def _cosine_similarity(
+        self,
+        a: np.ndarray,
+        b: np.ndarray
+    ) -> float:
+
+
+        denominator = (
+
+            np.linalg.norm(a)
+            *
+            np.linalg.norm(b)
+
+        )
+
+
+        if denominator == 0:
+
+            return 0.0
+
+
+        return float(
+
+            np.dot(a, b)
+            /
+            denominator
+
+        )
+
+
+
+    # ---------------------------------------------------------
+    # Save Conversation Memory
+    # ---------------------------------------------------------
+
+    def save_context(
+        self,
+        inputs: Dict[str, Any],
+        outputs: Dict[str, Any]
+    ) -> None:
+
+
+        user_input = inputs.get(
+            "input",
+            ""
+        )
+
+
+        ai_output = outputs.get(
+            "output",
+            ""
+        )
+
+
+        memory_text = (
+
+            f"User: {user_input}\n"
+            f"AI: {ai_output}"
+
+        )
+
+
+        vector = (
+
+            self.embedding_model
+            .embed_query(memory_text)
+
+        )
+
+
+        self.memory_nodes.append(
+
+            {
+
+                "id": str(uuid.uuid4()),
+
+                "text": memory_text,
+
+                "vector": vector,
+
+                "timestamp":
+                    datetime.now(
+                        timezone.utc
+                    )
+
+            }
+
+        )
+
+
+
+    # ---------------------------------------------------------
+    # Temporal Decay
+    # ---------------------------------------------------------
+
+    def _calculate_time_decay(
+        self,
+        timestamp: datetime
+    ) -> float:
+
+
+        elapsed_minutes = (
+
+            datetime.now(
+                timezone.utc
+            )
+            -
+            timestamp
+
+        ).total_seconds() / 60
+
+
+        return np.exp(
+
+            -self.decay_rate
+            *
+            elapsed_minutes
+
+        )
+
+
+
+    # ---------------------------------------------------------
+    # Memory Recall
+    # ---------------------------------------------------------
+
+    def load_memory_variables(
+        self,
+        inputs: Dict[str, Any]
+    ) -> Dict[str, Any]:
+
+
+        query = inputs.get(
+            "input",
+            ""
+        )
+
+
+        if (
+
+            not query
+            or
+            not self.memory_nodes
+
+        ):
+
+            return {
+
+                self.memory_key:
+                ""
+
+            }
+
+
+
+        query_vector = np.array(
+
+            self.embedding_model
+            .embed_query(query)
+
+        )
+
+
+
+        scored_nodes = []
+
+
+
+        for node in self.memory_nodes:
+
+
+            similarity = (
+
+                self._cosine_similarity(
+
+                    query_vector,
+
+                    np.array(
+                        node["vector"]
+                    )
+
+                )
+
+            )
+
+
+            time_score = (
+
+                self._calculate_time_decay(
+
+                    node["timestamp"]
+
+                )
+
+            )
+
+
+
+            resonance_score = (
+
+                similarity
+                *
+                self.semantic_weight
+
+                +
+
+                time_score
+                *
+                self.time_weight
+
+            )
+
+
+            scored_nodes.append(
+
+                (
+
+                    resonance_score,
+
+                    node["text"]
+
+                )
+
+            )
+
+
+
+        scored_nodes.sort(
+
+            key=lambda x: x[0],
+
+            reverse=True
+
+        )
+
+
+
+        recalled_memories = [
+
+            text
+
+            for score, text
+
+            in scored_nodes[:3]
+
+        ]
+
+
+
+        return {
+
+            self.memory_key:
+
+            "\n\n---\n\n".join(
+
+                recalled_memories
+
+            )
+
+        }
+
+
+
+    def clear(self):
+
+        self.memory_nodes.clear()
+
+
+
+# =====================================================================
+# LangGraph State Integration
+# =====================================================================
+
+
+class AgentState(TypedDict):
+
+    messages: Annotated[
+        list,
+        add_messages
+    ]
+
+    resonating_context: str
+
+
+
+def recall_past_memories_node(
+    state: AgentState,
+    memory_engine: NonLinearSemanticMemory
+) -> dict:
+
+
+    latest_message = (
+
+        state["messages"][-1].content
+
+        if state["messages"]
+
+        else ""
+
+    )
+
+
+
+    memory_data = (
+
+        memory_engine
+        .load_memory_variables(
+
+            {
+
+                "input":
+                latest_message
+
+            }
+
+        )
+
+    )
+
+
+
+    return {
+
+        "resonating_context":
+
+        memory_data.get(
+
+            "chat_history",
+
+            ""
+
+        )
+
+    }
